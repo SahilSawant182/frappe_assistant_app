@@ -10,16 +10,20 @@
     --bg-page:        #0f1117;
     --bg-card:        #1a1d27;
     --bg-input:       #12151e;
+    --bg-secondary:   #1a1d27;
     --accent:         #6c63ff;
     --accent-light:   #8b85ff;
     --accent-glow:    rgba(108, 99, 255, 0.25);
     --text-primary:   #e8eaf0;
     --text-secondary: #8b92a5;
     --border:         rgba(255,255,255,0.07);
+    --border-color:   rgba(255,255,255,0.10);
     --border-accent:  rgba(108, 99, 255, 0.45);
+    --color-primary:  #8b85ff;
     --success:        #22d3a5;
     --radius-lg:      16px;
     --radius-md:      10px;
+    --radius-sm:      6px;
     --shadow-card:    0 8px 32px rgba(0,0,0,0.45);
     --transition:     0.22s cubic-bezier(0.4, 0, 0.2, 1);
   }
@@ -897,38 +901,52 @@
     text-transform: uppercase;
     cursor: pointer;
     transition: color var(--transition);
+    user-select: none;
   }
 
-  #fac-toggle {
-    appearance: none;
-    -webkit-appearance: none;
-    width: 40px; height: 22px;
-    background: rgba(255,255,255,0.1);
-    border: 1px solid var(--border);
-    border-radius: 999px;
+  /* Custom toggle switch — fully self-contained, no native appearance */
+  .toggle-switch {
     position: relative;
-    cursor: pointer;
-    transition: background var(--transition), border-color var(--transition);
+    width: 44px;
+    height: 24px;
     flex-shrink: 0;
+    cursor: pointer;
   }
 
-  #fac-toggle::after {
-    content: '';
+  .toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
     position: absolute;
-    top: 2px; left: 2px;
-    width: 16px; height: 16px;
+  }
+
+  .toggle-track {
+    position: absolute;
+    inset: 0;
+    background: rgba(255,255,255,0.08);
+    border: 1.5px solid rgba(255,255,255,0.15);
+    border-radius: 999px;
+    transition: background var(--transition), border-color var(--transition);
+  }
+
+  .toggle-thumb {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
     border-radius: 50%;
     background: var(--text-secondary);
     transition: transform var(--transition), background var(--transition);
   }
 
-  #fac-toggle:checked {
-    background: rgba(249,168,107,0.2);
-    border-color: rgba(249,168,107,0.6);
+  .toggle-switch input:checked ~ .toggle-track {
+    background: rgba(249,168,107,0.18);
+    border-color: rgba(249,168,107,0.55);
   }
 
-  #fac-toggle:checked::after {
-    transform: translateX(18px);
+  .toggle-switch input:checked ~ .toggle-thumb {
+    transform: translateX(20px);
     background: #f9a86b;
   }
 
@@ -947,6 +965,35 @@
     background: rgba(249,168,107,0.12);
     color: #f9a86b;
     border: 1px solid rgba(249,168,107,0.35);
+  }
+
+  /* ─── Field Extraction Banner ─────────────────────────────────── */
+  .field-extraction-banner {
+    background: rgba(34,211,165,0.07);
+    border: 1px solid rgba(34,211,165,0.3);
+    border-radius: var(--radius-md);
+    padding: 18px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .field-extraction-banner .fe-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--success);
+  }
+  .field-extraction-banner .fe-value {
+    font-size: 26px;
+    font-weight: 800;
+    color: var(--text-primary);
+    line-height: 1.2;
+  }
+  .field-extraction-banner .fe-context {
+    font-size: 12px;
+    color: var(--text-secondary);
   }
 
   /* ─── Responsive ────────────────────────────────────────────── */
@@ -1020,7 +1067,11 @@
 
     <!-- FAC / Legacy toggle -->
     <div class="fac-toggle-row">
-      <input type="checkbox" id="fac-toggle" title="Toggle: Legacy ↔ FAC Assistant" checked>
+      <label class="toggle-switch" title="Toggle: Legacy ↔ FAC Assistant">
+        <input type="checkbox" id="fac-toggle" checked>
+        <span class="toggle-track"></span>
+        <span class="toggle-thumb"></span>
+      </label>
       <label class="fac-toggle-label active" id="fac-toggle-lbl" for="fac-toggle">FAC Assistant</label>
     </div>
 
@@ -1097,7 +1148,7 @@
     if (facToggle.checked) {
       facToggleLbl.classList.add("active");
       facToggleLbl.textContent = "FAC Assistant";
-      promptInput.placeholder = "e.g. List all Billing Account Master, Show customers, Count invoices...";
+      promptInput.placeholder = "e.g. List all Documents, Show customers, Count invoices...";
     } else {
       facToggleLbl.classList.remove("active");
       facToggleLbl.textContent = "Legacy Assistant";
@@ -1208,17 +1259,18 @@
 
           /* Renderer Registry */
           const renderers = {
-            list_documents: renderListDocuments,
-            get_document: renderGetDocument,
-            create_document: renderCreateDocument,
-            update_document: renderUpdateDocument,
-            delete_document: renderDeleteDocument,
-            generate_report: renderGenerateReport
+            list_documents:   renderListDocuments,
+            get_document:     renderGetDocument,
+            create_document:  renderCreateDocument,
+            update_document:  renderUpdateDocument,
+            delete_document:  renderDeleteDocument,
+            submit_document:  renderSubmitDocument,
+            generate_report:  renderGenerateReport
           };
 
           const renderer = renderers[action];
           if (renderer) {
-            responseLabel.textContent = action.replace("_", " ").toUpperCase();
+            responseLabel.textContent = action.replace(/_/g, ' ').toUpperCase();
             responseBox.innerHTML = renderer(inner) + rawResponseHtml;
           } else {
             // Other registered action helpers or generic fallback
@@ -1233,11 +1285,11 @@
               responseBox.innerHTML = renderGroupDocuments(inner) + rawResponseHtml;
             } else {
               responseLabel.textContent = "Result";
-              responseBox.innerHTML = 
-                '<div style="font-size:13px; color:var(--text-secondary); margin-bottom:8px;">No custom renderer found for action: <code>' + escHtml(action) + '</code>. Showing raw response below:</div>' +
+              responseBox.innerHTML =
+                '<div style="font-size:13px; color:var(--text-secondary); margin-bottom:8px;">Showing raw response for: <code>' + escHtml(action) + '</code></div>' +
                 '<details open class="raw-response-details">' +
                   '<summary style="font-size:11px; color:var(--text-secondary); cursor:pointer; font-weight:500;">Raw JSON Response</summary>' +
-                  '<pre style="margin-top:8px;"><code class="json">' + syntaxHighlight(JSON.stringify(inner, null, 2)) + '</code></pre>' +
+                  '<pre style="margin-top:8px;">' + syntaxHighlight(JSON.stringify(inner, null, 2)) + '</pre>' +
                 '</details>';
             }
           }
@@ -1269,7 +1321,8 @@
             actionMeta.innerHTML      = "";
             responseLabel.textContent = "Error";
             responseBox.className     = "error";
-            responseBox.innerHTML     = "<span>&#9888;&#65039;&nbsp;&nbsp;that much functionality is not available in this phase</span>";
+            const errMsg = (msg2 && msg2.error) ? msg2.error : "An unexpected error occurred.";
+            responseBox.innerHTML     = '<span>&#9888;&#65039;&nbsp;&nbsp;' + escHtml(errMsg) + '</span>';
           }
         }
 
@@ -1431,27 +1484,21 @@
     const doctype = msg.doctype || "";
     const name = msg.name || "";
     const viewLink = (doctype && name)
-      ? '<a class="view-doc-link" href="/' + encodeURIComponent(doctype) + '/' + encodeURIComponent(name) + '" target="_blank" style="margin-top:12px; display:inline-flex; align-items:center; gap:6px; color:var(--color-primary); text-decoration:none; font-weight:500;">' +
-          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12">' +
-            '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>' +
-            '<polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>' +
-          '</svg>View Document</a>'
+      ? '<a class="view-doc-link" href="/' + encodeURIComponent(doctype) + '/' + encodeURIComponent(name) + '" target="_blank">&#128279; View Document</a>'
       : "";
-
     return (
-      '<div class="mutation-card create" style="border-left: 4px solid #4caf50; background: var(--bg-secondary); padding: 16px; border-radius: 8px;">' +
-        '<div style="font-weight: 600; color: #4caf50; font-size: 15px; display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">' +
-          '<span>✅ Document Created Successfully</span>' +
+      '<div class="success-banner">' +
+        '<div class="success-icon-row">' +
+          '<div class="check-circle">' +
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>' +
+          '</div>' +
+          '<div class="success-title">&#10003; ' + escHtml(doctype) + ' Created</div>' +
         '</div>' +
-        '<div style="margin-bottom: 8px;">' +
-          '<div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); margin-bottom: 2px;">DocType:</div>' +
-          '<div style="font-weight: 500;">' + escHtml(doctype) + '</div>' +
+        '<div class="success-meta">' +
+          '<span class="meta-pill">DocType <span>' + escHtml(doctype) + '</span></span>' +
+          '<span class="meta-pill">ID <span>' + escHtml(name) + '</span></span>' +
         '</div>' +
-        '<div style="margin-bottom: 8px;">' +
-          '<div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); margin-bottom: 2px;">Name:</div>' +
-          '<div style="font-weight: 500;">' + escHtml(name) + '</div>' +
-        '</div>' +
-        viewLink +
+        (viewLink ? viewLink : '') +
       '</div>'
     );
   }
@@ -1529,42 +1576,78 @@
     );
   }
 
+  /* Submit Document Renderer */
+  function renderSubmitDocument(msg) {
+    const doctype = msg.doctype || "";
+    const name    = msg.name    || "";
+    const state   = msg.workflow_state || msg.state_description || "Submitted";
+    const viewLink = (doctype && name)
+      ? '<a href="/' + encodeURIComponent(doctype) + '/' + encodeURIComponent(name) + '" target="_blank" style="display:inline-flex;align-items:center;gap:6px;color:var(--color-primary);text-decoration:none;font-weight:500;margin-top:12px;">&#128279; Open in ERP</a>'
+      : "";
+    return (
+      '<div style="border-left:4px solid var(--success);background:var(--bg-secondary);padding:16px;border-radius:8px;">' +
+        '<div style="font-weight:600;color:var(--success);font-size:15px;display:flex;align-items:center;gap:8px;margin-bottom:12px;">' +
+          '<span>&#10003; ' + escHtml(doctype) + ' Submitted Successfully</span>' +
+        '</div>' +
+        '<div style="margin-bottom:8px;">' +
+          '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-secondary);margin-bottom:2px;">Document:</div>' +
+          '<div style="font-weight:500;">' + escHtml(name) + '</div>' +
+        '</div>' +
+        '<div style="margin-bottom:8px;">' +
+          '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-secondary);margin-bottom:2px;">State:</div>' +
+          '<div>' + escHtml(state) + '</div>' +
+        '</div>' +
+        (viewLink ? viewLink : '') +
+      '</div>'
+    );
+  }
+
   /* Get Document Renderer */
   function renderGetDocument(msg) {
     const doctype = msg.doctype || "";
     const name = msg.name || "";
-    const doc = msg.document || {};
+    // FAC returns data inside msg.document OR msg.data
+    const doc = msg.document || msg.data || {};
+
+    // Field extraction highlight
+    let extractionBanner = "";
+    if (msg.field_extraction && msg.extracted_field) {
+      extractionBanner =
+        '<div class="field-extraction-banner">' +
+          '<div class="fe-label">' + escHtml(msg.extracted_field.replace(/_/g,' ')) + '</div>' +
+          '<div class="fe-value">' + escHtml(String(msg.extracted_value || '')) + '</div>' +
+          '<div class="fe-context">' + escHtml(doctype) + ' &mdash; ' + escHtml(name) + '</div>' +
+        '</div>';
+    }
 
     let fieldRows = "";
-    Object.keys(doc).forEach(k => {
-      const val = doc[k];
-      if (k.startsWith('_') || typeof val === 'object') return;
+    const docObj = (typeof doc === 'object' && !Array.isArray(doc)) ? doc : {};
+    Object.keys(docObj).forEach(k => {
+      const val = docObj[k];
+      if (k.startsWith('_') || val === null || val === undefined || typeof val === 'object') return;
       fieldRows +=
-        '<tr style="border-bottom: 1px solid var(--border-color);">' +
-          '<td style="padding: 8px; font-weight: 500; color: var(--text-secondary); width: 30%;">' + escHtml(k) + '</td>' +
-          '<td style="padding: 8px; color: var(--text-primary);">' + escHtml(String(val)) + '</td>' +
+        '<tr>' +
+          '<td style="padding:8px 12px; font-weight:600; color:var(--text-secondary); width:35%; white-space:nowrap; border-bottom:1px solid var(--border-color);">' + escHtml(k.replace(/_/g,' ')) + '</td>' +
+          '<td style="padding:8px 12px; color:var(--text-primary); border-bottom:1px solid var(--border-color);">' + escHtml(String(val)) + '</td>' +
         '</tr>';
     });
 
     const viewLink = (doctype && name)
-      ? '<a class="view-doc-link" href="/' + encodeURIComponent(doctype) + '/' + encodeURIComponent(name) + '" target="_blank" style="margin-top:12px; display:inline-flex; align-items:center; gap:6px; color:var(--color-primary); text-decoration:none; font-weight:500;">' +
-          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12">' +
-            '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>' +
-            '<polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>' +
-          '</svg>View Document</a>'
+      ? '<a class="view-doc-link" href="/' + encodeURIComponent(doctype) + '/' + encodeURIComponent(name) + '" target="_blank">&#128279; Open in ERP</a>'
       : "";
 
     return (
-      '<div class="doc-viewer" style="background: var(--bg-secondary); padding: 16px; border-radius: 8px;">' +
-        '<div class="doc-viewer-header" style="font-weight: 600; font-size: 15px; color: var(--text-primary); margin-bottom: 12px; display:flex; justify-content:space-between;">' +
+      extractionBanner +
+      '<div class="doc-viewer">' +
+        '<div class="doc-viewer-header">' +
           '<span>' + escHtml(doctype) + ' &mdash; ' + escHtml(name) + '</span>' +
+          (viewLink ? viewLink : '') +
         '</div>' +
-        '<div style="overflow-x:auto; border: 1px solid var(--border-color); border-radius: 6px;">' +
-          '<table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 13px;">' +
-            '<tbody>' + fieldRows + '</tbody>' +
+        '<div style="overflow-x:auto;">' +
+          '<table style="width:100%; border-collapse:collapse; font-size:13px;">' +
+            '<tbody>' + (fieldRows || '<tr><td style="padding:12px; color:var(--text-secondary);">No fields to display.</td></tr>') + '</tbody>' +
           '</table>' +
         '</div>' +
-        viewLink +
       '</div>'
     );
   }

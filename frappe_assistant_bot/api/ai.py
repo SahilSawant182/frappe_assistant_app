@@ -5,7 +5,7 @@ import re
 import time
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-OLLAMA_URL           = "http://localhost:11434/api/generate"
+OLLAMA_URL = "http://135.181.6.215:11434/api/generate"
 OLLAMA_MODEL         = "qwen3:8b"
 TIMEOUT              = 120   # seconds — LLM responses can be slow
 CONFIDENCE_THRESHOLD = 0.40  # below this, ask user to clarify instead of acting
@@ -1842,7 +1842,8 @@ from frappe_assistant_bot.api.fac_layer import (
     _FAC_IMPORT_OK,
     _FAC_IMPORT_ERROR,
     FAC_TOOLS as _FAC_TOOLS,
-    execute_fac_tool
+    execute_fac_tool,
+    _smart_backend_orchestration,
 )
 
 # ── FAC-mode system prompt ─────────────────────────────────────────────────────
@@ -1856,7 +1857,7 @@ JSON Response Format:
   "normalized_prompt": "<clean restatement of intent>",
   "confidence": <float 0.0-1.0>,
   "suggestions": ["alt phrasing 1", "alt phrasing 2"],
-  "tool": "<one of: list_documents, get_document, create_document, update_document, delete_document, search_documents, aggregate_documents, group_documents, report_list, generate_report, run_workflow, get_doctype_info>",
+  "tool": "<one of: list_documents, get_document, create_document, update_document, delete_document, search_documents, aggregate_documents, group_documents, report_list, generate_report, run_workflow, get_doctype_info, submit_document>",
   "doctype": "<detected DocType>",
   "name": "<document name/identifier for get/update/delete>",
   "data": {<field:value pairs for create/update>},
@@ -1880,12 +1881,23 @@ TOOL MAPPING:
 - "create/add X" → tool: create_document
 - "update/change/set X" → tool: update_document
 - "delete/remove X" → tool: delete_document
-- "search/find X where..." → tool: search_documents
+- "search/find X where..." → tool: list_documents (with filters)
+- "find X named/called Y" → tool: list_documents (with filters matching Y)
+- "what city/phone/email/gst of X" → tool: list_documents (find X by name, backend extracts field)
+- "books issued to Sonali" → tool: list_documents, doctype: Library Transaction, filters: {member_name: Sonali}
 - "how many X / count X" → tool: aggregate_documents, operation: count
 - "group X by Y / X per Y" → tool: group_documents
 - "sales report / inventory report" → tool: report_list or generate_report
 - "approve / submit / reject X" → tool: run_workflow
+- "submit X document" → tool: submit_document
 - "what fields does X have" → tool: get_doctype_info
+
+FILTER RULES:
+- Use ONLY fieldnames from the DocType metadata provided below.
+- For search queries like "find students named Neha" → filters: {student_name: "Neha"}
+- For "invoices of Customer ABC" → filters: {customer: "ABC"} or {customer_name: "ABC"}
+- For "books available" → filters: {status: "Available"}
+- For date filters use ISO format: {creation: [">=", "2024-01-01"]}
 
 Examples:
 User: List all customers
@@ -1896,6 +1908,9 @@ User: How many customers do we have
 
 User: Delete kafka book
 {"normalized_prompt":"Delete Book by Kafka","confidence":0.85,"suggestions":[],"tool":"delete_document","doctype":"Book","name":"kafka","limit":20,"data":{},"filters":{},"operation":"","group_by":"","report_name":"","workflow_action":""}
+
+User: What city is College ABC in
+{"normalized_prompt":"Find city of College ABC","confidence":0.92,"suggestions":[],"tool":"list_documents","doctype":"Customer","filters":{"customer_name":"ABC"},"limit":5,"name":"","data":{},"operation":"","group_by":"","report_name":"","workflow_action":""}
 """
 
 
@@ -2065,7 +2080,7 @@ def process_prompt_fac(prompt):
     kwargs = {"doctype": doctype} if doctype else {}
     kwargs["_prompt"] = prompt_clean
 
-    if tool in ("get_document", "update_document", "delete_document"):
+    if tool in ("get_document", "update_document", "delete_document", "submit_document"):
         kwargs["name"] = name
     if tool in ("create_document", "update_document"):
         kwargs["data"] = parsed.get("data") or {}
@@ -2097,6 +2112,17 @@ def process_prompt_fac(prompt):
 
     t_exec = time.perf_counter() - t_exec_start
     t_llm_only = t_llm - (time.perf_counter() - t_start - t_exec)  # approximate
+
+    # ── Step 8b: Smart Backend Orchestration (Phase 5) ────────────────────────
+    # If search/list returned exactly one record, auto-fetch the full document
+    # and optionally extract the user's requested field — no LLM needed.
+    if tool in ("list_documents", "search_documents") and result.get("success"):
+        try:
+            orchestrated = _smart_backend_orchestration(tool, kwargs, result, prompt_clean)
+            if orchestrated is not result:
+                result = orchestrated
+        except Exception as _orch_err:
+            frappe.logger().warning("Smart Orchestration error: {}".format(_orch_err))
 
     # ── Step 9: Annotate + log + return ───────────────────────────────────────
     if result:

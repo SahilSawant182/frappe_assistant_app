@@ -6,6 +6,12 @@ No custom CRUD logic. No frappe.get_all / frappe.get_doc / doc.insert calls.
 FAC tool classes are the ONLY execution mechanism.
 
 Output normalizer maps FAC responses → the shape the frontend renderers expect.
+
+Phase 5 — Smart Backend Orchestration:
+  When a list_documents / search_documents returns exactly one record the
+  backend automatically issues a get_document call so the frontend receives
+  the full document (enabling field-extraction answers like
+  "what city is College ABC in?").
 """
 
 import frappe
@@ -25,6 +31,7 @@ try:
     from frappe_assistant_core.plugins.core.tools.run_workflow     import RunWorkflow
     from frappe_assistant_core.plugins.core.tools.get_doctype_info import GetDoctypeInfo
     from frappe_assistant_core.plugins.core.tools.get_pending_approvals import GetPendingApprovals
+    from frappe_assistant_core.plugins.core.tools.submit_document  import DocumentSubmit
 
     _FAC_IMPORT_OK = True
     _FAC_IMPORT_ERROR = None
@@ -45,27 +52,28 @@ except ImportError as _e:
 
     DocumentList = DocumentGet = DocumentCreate = DocumentUpdate = DocumentDelete = _Stub
     SearchDocuments = ReportList = GenerateReport = RunWorkflow = GetDoctypeInfo = _Stub
-    GetPendingApprovals = _Stub
+    GetPendingApprovals = DocumentSubmit = _Stub
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FAC Tool Class Registry
 # ─────────────────────────────────────────────────────────────────────────────
 FAC_TOOL_CLASSES = {
-    "list_documents":      DocumentList,
-    "get_document":        DocumentGet,
-    "create_document":     DocumentCreate,
-    "update_document":     DocumentUpdate,
-    "delete_document":     DocumentDelete,
-    "search_documents":    SearchDocuments,
-    "report_list":         ReportList,
-    "generate_report":     GenerateReport,
-    "run_workflow":        RunWorkflow,
-    "get_doctype_info":    GetDoctypeInfo,
+    "list_documents":        DocumentList,
+    "get_document":          DocumentGet,
+    "create_document":       DocumentCreate,
+    "update_document":       DocumentUpdate,
+    "delete_document":       DocumentDelete,
+    "search_documents":      SearchDocuments,
+    "report_list":           ReportList,
+    "generate_report":       GenerateReport,
+    "run_workflow":          RunWorkflow,
+    "get_doctype_info":      GetDoctypeInfo,
     "get_pending_approvals": GetPendingApprovals,
+    "submit_document":       DocumentSubmit,
     # aggregate / group handled by adapter below (FAC uses list_documents with filters)
-    "aggregate_documents": DocumentList,
-    "group_documents":     DocumentList,
+    "aggregate_documents":   DocumentList,
+    "group_documents":       DocumentList,
 }
 
 
@@ -90,30 +98,51 @@ def _normalize(fac_result, action, doctype=""):
     if not out.get("doctype") and doctype:
         out["doctype"] = doctype
 
-    # list_documents / search_documents: FAC uses "data", frontend needs "records"
-    if action in ("list_documents", "search_documents", "aggregate_documents"):
+    # list_documents: FAC uses "data" (list of dicts), frontend needs "records"
+    if action == "list_documents":
         raw_data = fac_result.get("data", [])
         if isinstance(raw_data, list):
-            # frontend list renderer expects a flat list of name strings
-            out["records"] = [
-                r.get("name", str(r)) if isinstance(r, dict) else str(r)
-                for r in raw_data
-            ]
-            out["count"] = len(raw_data)
+            # Keep full dicts so the table renderer can show all fields
+            out["records"] = [dict(r) if isinstance(r, dict) else {"name": str(r)} for r in raw_data]
+            out["count"] = fac_result.get("count", len(raw_data))
         if out.get("success") and not out.get("message"):
             out["message"] = "Found {} {} record(s)".format(out.get("count", 0), doctype)
 
-    # aggregate_documents: derive count from list result
+    # search_documents: FAC SearchDocuments uses global text search
+    # Result shape: {success, results, count, query}
+    # Frontend search renderer expects {records, display_fields, filters}
+    if action == "search_documents":
+        # FAC SearchDocuments tool returns "results", not "data"
+        raw = fac_result.get("results") or fac_result.get("data") or []
+        if isinstance(raw, list):
+            out["records"] = [dict(r) if isinstance(r, dict) else {"name": str(r)} for r in raw]
+            out["count"] = len(out["records"])
+        if not out.get("display_fields"):
+            out["display_fields"] = []
+        if not out.get("filters"):
+            out["filters"] = {}
+        if out.get("success") and not out.get("message"):
+            out["message"] = "Found {} record(s) matching your query".format(out.get("count", 0))
+
+    # aggregate_documents: derive count from list result total_count
     if action == "aggregate_documents":
+        raw_data = fac_result.get("data", [])
         if out.get("success"):
-            out["result"]    = fac_result.get("total_count") or fac_result.get("count") or len(fac_result.get("data", []))
+            out["result"]    = (
+                fac_result.get("total_count")
+                or fac_result.get("result")
+                or fac_result.get("count")
+                or (len(raw_data) if isinstance(raw_data, list) else 0)
+            )
             out["operation"] = "count"
-            out["message"]   = "Total {} records: {}".format(doctype, out["result"])
+            out["message"]   = "There are {:,} {} record(s) in total.".format(out["result"], doctype)
 
     # get_document: FAC uses "data", frontend needs "document"
-    if action == "get_document":
+    if action in ("get_document", "auto_get_document"):
         if "data" in fac_result and "document" not in fac_result:
             out["document"] = fac_result["data"]
+        # Normalise action name so renderers see 'get_document'
+        out["action"] = "get_document"
         if out.get("success") and not out.get("message"):
             out["message"] = "Fetched {} {}".format(doctype, fac_result.get("name", ""))
 
@@ -134,6 +163,11 @@ def _normalize(fac_result, action, doctype=""):
     if action == "delete_document":
         if out.get("success") and not out.get("message"):
             out["message"] = "{} {} deleted successfully".format(doctype, fac_result.get("name", ""))
+
+    # submit_document
+    if action == "submit_document":
+        if out.get("success") and not out.get("message"):
+            out["message"] = "{} {} submitted successfully".format(doctype, fac_result.get("name", ""))
 
     return out
 
@@ -202,6 +236,115 @@ def execute_fac_tool(tool_name, arguments, fac_class_name=None):
     )
 
     return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 5 — Smart Backend Orchestration
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _extract_field_keywords(prompt):
+    """
+    Detect if the user is asking about a specific field value.
+    Returns the field hint (e.g. 'city', 'gst_number', 'phone') or None.
+    """
+    import re
+    p = prompt.lower()
+    field_patterns = [
+        (r'\b(city|town|location|address|pin|pincode|zip)\b', 'city'),
+        (r'\b(gst|gstin|gst.?number|gst.?no)\b', 'gstin'),
+        (r'\b(phone|mobile|contact.?no|telephone)\b', 'phone'),
+        (r'\b(email|e.?mail)\b', 'email'),
+        (r'\b(status|state)\b', 'status'),
+        (r'\b(balance|outstanding|amount)\b', 'outstanding_amount'),
+        (r'\b(website|url)\b', 'website'),
+        (r'\b(pan|pan.?number)\b', 'pan'),
+        (r'\b(author)\b', 'author'),
+        (r'\b(isbn)\b', 'isbn'),
+        (r'\b(price|rate|cost)\b', 'standard_rate'),
+        (r'\b(department)\b', 'department'),
+        (r'\b(designation)\b', 'designation'),
+    ]
+    for pat, field in field_patterns:
+        if re.search(pat, p):
+            return field
+    return None
+
+
+def _smart_backend_orchestration(tool_name, arguments, initial_result, prompt):
+    """
+    Phase 5: Smart Backend Orchestration.
+
+    After a list_documents result:
+    - If exactly one record came back → auto-call get_document and return the
+      full document (field extraction).
+    - If the user was asking about a specific field, extract and highlight it.
+
+    This logic runs entirely in the backend; the LLM is NOT involved.
+    """
+    if tool_name not in ("list_documents", "search_documents"):
+        return initial_result
+
+    if not initial_result.get("success"):
+        return initial_result
+
+    records = initial_result.get("records") or []
+    doctype  = arguments.get("doctype", "")
+
+    # Auto-get only when exactly one record was returned
+    if len(records) != 1:
+        return initial_result
+
+    rec = records[0]
+    doc_name = rec.get("name") if isinstance(rec, dict) else str(rec)
+    if not doc_name:
+        return initial_result
+
+    frappe.logger().info(
+        "Smart Orchestration — single record found, auto-calling get_document "
+        "for {} '{}'".format(doctype, doc_name)
+    )
+
+    try:
+        get_result = execute_fac_tool("get_document", {"doctype": doctype, "name": doc_name, "_prompt": prompt})
+    except Exception as e:
+        frappe.logger().warning("Smart Orchestration — get_document failed: {}".format(e))
+        return initial_result
+
+    if not get_result.get("success"):
+        return initial_result
+
+    # Detect field extraction request
+    field_hint = _extract_field_keywords(prompt)
+    doc_data   = get_result.get("document") or get_result.get("data") or {}
+
+    if field_hint and isinstance(doc_data, dict):
+        # Try to find an exact or close matching field
+        import difflib
+        field_val  = None
+        matched_fn = None
+        # Exact match first
+        if field_hint in doc_data:
+            field_val  = doc_data[field_hint]
+            matched_fn = field_hint
+        else:
+            # Fuzzy match among doc fields
+            matches = difflib.get_close_matches(field_hint, list(doc_data.keys()), n=1, cutoff=0.6)
+            if matches:
+                matched_fn = matches[0]
+                field_val  = doc_data[matched_fn]
+
+        if field_val is not None and matched_fn:
+            get_result["extracted_field"]  = matched_fn
+            get_result["extracted_value"]  = field_val
+            get_result["field_extraction"] = True
+            get_result["message"] = "The {} of {} '{}' is: {}".format(
+                matched_fn.replace('_', ' ').title(), doctype, doc_name, field_val
+            )
+
+    # Mark that this was auto-orchestrated
+    get_result["auto_orchestrated"] = True
+    get_result["original_action"]   = tool_name
+    return get_result
 
 
 def _attempt_validation_repair(tool_name, exec_args, raw_result):
@@ -333,3 +476,11 @@ def _log_fac_execution(prompt, tool, cls, args, success, t_exec):
 # Public registry (used by process_prompt_fac in ai.py)
 # ─────────────────────────────────────────────────────────────────────────────
 FAC_TOOLS = FAC_TOOL_CLASSES   # kept for backward compat with import in ai.py
+
+# Export smart orchestration so process_prompt_fac can call it
+__all__ = [
+    "FAC_TOOL_CLASSES", "FAC_TOOLS",
+    "execute_fac_tool",
+    "_FAC_IMPORT_OK", "_FAC_IMPORT_ERROR",
+    "_smart_backend_orchestration",
+]
